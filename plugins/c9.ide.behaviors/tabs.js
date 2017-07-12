@@ -1,13 +1,13 @@
 /*global apf*/
 define(function(require, exports, module) {
     main.consumes = [
-        "Plugin", "settings", "menus", "preferences", "commands", 
+        "Plugin", "settings", "menus", "preferences", "commands",
         "tabManager", "ui", "save", "panels", "tree", "Menu", "fs",
         "dialog.question", "clipboard"
     ];
     main.provides = ["tabbehavior"];
     return main;
-    
+
     function main(options, imports, register) {
         var Plugin = imports.Plugin;
         var settings = imports.settings;
@@ -23,26 +23,36 @@ define(function(require, exports, module) {
         var fs = imports.fs;
         var prefs = imports.preferences;
         var question = imports["dialog.question"].show;
-        
+
         /***** Initialization *****/
-        
+
         var plugin = new Plugin("Ajax.org", main.consumes);
         // var emit = plugin.getEmitter();
-        
+
         var mnuContext, mnuEditors, mnuTabs;
         var menuItems = [], menuClosedItems = [];
-        
+
         var paneList = [];
         var accessedPane = 0;
-        
+
         var cycleKeyPressed, changedTabs, unchangedTabs, dirtyNextTab, dirtyNextPane;
 
         var ACTIVEPAGE = function() { return tabs.focussedTab; };
         var ACTIVEPATH = function() { var tab = mnuContext.$tab || tabs.focussedTab; return tab && (tab.path || tab.relatedPath || tab.editor.getPathAsync); };
+
+        var CANLOCKTAB = function() {
+            console.log(tabs.focussedTab);
+            return !!!tabs.focussedTab.document.meta.locked;
+        };
+
+        var CANUNLOCKTAB = function() {
+            return !!tabs.focussedTab.document.meta.locked;
+        };
+
         var MORETABS = function() { return tabs.getTabs().length > 1; };
         var MORETABSINPANE = function() { return tabs.focussedTab && tabs.focussedTab.pane.getTabs().length > 1; };
         var MOREPANES = function() { return tabs.getPanes().length > 1; };
-        
+
         var movekey = "Command-Option-Shift";
         var definition = [
             ["clonetab", "", "", ACTIVEPAGE, "create a new tab with a view on the same file"],
@@ -66,6 +76,9 @@ define(function(require, exports, module) {
             ["tab9", "Command-9", "Ctrl-9", null, "navigate to the ninth tab"],
             ["tab0", "Command-0", "Ctrl-0", null, "navigate to the tenth tab"],
             ["revealtab", "Command-Shift-L", "Ctrl-Shift-L", ACTIVEPATH, "reveal current tab in the file tree"],
+            ["locktab", "Command-Shift-R", "Ctrl-Shift-R", CANLOCKTAB, "lock current tab"],
+            ["unlocktab", "Command-Shift-T", "Ctrl-Shift-T", CANUNLOCKTAB, "unlock current tab"],
+            ["renametab", null, null, null, "rename current tab"],
             ["nexttab", "Option-Tab", "Ctrl-Tab|Alt-`", MORETABSINPANE, "navigate to the next tab in the stack of accessed tabs"],
             ["previoustab", "Option-Shift-Tab", "Ctrl-Shift-Tab|Alt-Shift-`", MORETABSINPANE, "navigate to the previous tab in the stack of accessed tabs"],
             ["nextpane", "Option-ESC", "Ctrl-`", MOREPANES, "navigate to the next tab in the stack of panes"],
@@ -103,26 +116,26 @@ define(function(require, exports, module) {
             ["threeleft", "", "", null, "create a three pane layout with the stack on the left side"],
             ["threeright", "", "", null, "create a three pane layout with the stack on the right side"]
         ];
-        
+
         var loaded = false;
         function load() {
             if (loaded) return false;
             loaded = true;
-            
+
             // Settings
             settings.on("read", function(e) {
                 settings.setDefaults("user/general", [["revealfile", false]]);
-                
+
                 var list = settings.getJson("state/panecycle");
                 if (list) {
                     list.remove(null);
                     paneList = list;
                 }
             }, plugin);
-            
+
             settings.on("write", function(e) {
                 var list;
-                
+
                 if (paneList.changed) {
                     list = [];
                     paneList.forEach(function(tab, i) {
@@ -133,7 +146,7 @@ define(function(require, exports, module) {
                     paneList.changed = false;
                 }
             }, plugin);
-    
+
             // Preferences
             prefs.add({
                 "General": {
@@ -146,7 +159,7 @@ define(function(require, exports, module) {
                     }
                 }
             }, plugin);
-            
+
             // Commands
             definition.forEach(function(item) {
                 commands.addCommand({
@@ -162,7 +175,7 @@ define(function(require, exports, module) {
                     }
                 }, plugin);
             });
-            
+
             commands.addCommand({
                 name: "refocusTab",
                 bindKey: { mac: "Esc", win: "Esc", position: -1000 },
@@ -179,7 +192,7 @@ define(function(require, exports, module) {
                 },
                 passEvent: true
             }, plugin);
-            
+
             commands.addCommand({
                 name: "copyFilePath",
                 group: "",
@@ -209,20 +222,20 @@ define(function(require, exports, module) {
                         tab = el.$tab;
                         text = tab.path || tab.relatedPath;
                     }
-                    
+
                     if (text) {
                         clipboard.clipboardData.setData("text/plain", text);
-                    } 
+                    }
                     else if (tab && tab.editor.getPathAsync) {
                         tab.editor.getPathAsync(function(err, text) {
                             if (!err && text)
                                 clipboard.clipboardData.setData("text/plain", text);
                         });
                     }
-                        
+
                 }
             }, plugin);
-            
+
             // General Menus
             menus.addItemByPath("File/~", new ui.divider(), 100000, plugin);
             menus.addItemByPath("File/Close File", new ui.item({
@@ -233,7 +246,7 @@ define(function(require, exports, module) {
             }), 120000, plugin);
 
             mnuTabs = new ui.menu();
-            
+
             menus.addItemByPath("Window/Tabs", mnuTabs, 10100, plugin);
             menus.addItemByPath("Window/Tabs/Close Pane", new ui.item({
                 command: "closepane"
@@ -244,7 +257,7 @@ define(function(require, exports, module) {
             menus.addItemByPath("Window/Tabs/Close All But Current Tab", new ui.item({
                 command: "closeallbutme"
             }), 300, plugin);
-            
+
             menus.addItemByPath("Window/Tabs/~", new ui.divider(), 1000000, plugin);
             menus.addItemByPath("Window/Tabs/Split Pane in Two Rows", new ui.item({
                 command: "vsplit"
@@ -253,7 +266,7 @@ define(function(require, exports, module) {
                 command: "hsplit"
             }), 1000200, plugin);
             menus.addItemByPath("Window/Tabs/~", new ui.divider(), 1000300, plugin);
-            
+
             menus.addItemByPath("Window/Tabs/~", new apf.label({
                 class: "splits",
                 caption: "<span class='nosplit'></span>"
@@ -291,7 +304,7 @@ define(function(require, exports, module) {
             }), 400, plugin);
 
             menus.addItemByPath("Window/Navigation/~", new ui.divider(), 500, plugin);
-            
+
             menus.addItemByPath("Window/Navigation/Move Tab to Right", new ui.item({
                 command: "movetabright"
             }), 600, plugin);
@@ -304,9 +317,9 @@ define(function(require, exports, module) {
             menus.addItemByPath("Window/Navigation/Move Tab to Down", new ui.item({
                 command: "movetabdown"
             }), 900, plugin);
-            
+
             menus.addItemByPath("Window/Navigation/~", new ui.divider(), 1000, plugin);
-            
+
             menus.addItemByPath("Window/Navigation/Go to Pane to Right", new ui.item({
                 command: "gotopaneright"
             }), 1100, plugin);
@@ -319,7 +332,7 @@ define(function(require, exports, module) {
             menus.addItemByPath("Window/Navigation/Go to Pane to Down", new ui.item({
                 command: "gotopanedown"
             }), 1400, plugin);
-            
+
             menus.addItemByPath("Window/Navigation/~", new ui.divider(), 1500, plugin);
 
             menus.addItemByPath("Window/Navigation/Next Pane in History", new ui.item({
@@ -329,10 +342,10 @@ define(function(require, exports, module) {
             menus.addItemByPath("Window/Navigation/Previous Pane in History", new ui.item({
                 command: "previouspane"
             }), 1700, plugin);
-            
+
             // Tab Helper Menu
             menus.addItemByPath("Window/~", new ui.divider(), 10000, plugin);
-            
+
             mnuTabs.addEventListener("prop.visible", function(e) {
                 if (e.value) {
                     if (mnuTabs.opener && mnuTabs.opener.parentNode.localName == "tab") {
@@ -344,7 +357,7 @@ define(function(require, exports, module) {
                 else {
                     removeContextInfo(e);
                 }
-                
+
                 if (mnuTabs.opener && mnuTabs.opener["class"] == "tabmenubtn")
                     apf.setStyleClass(mnuTabs.$ext, "tabsContextMenu");
                 else
@@ -356,7 +369,7 @@ define(function(require, exports, module) {
                 command: "copyFilePath"
             }), 800, plugin);
             menus.addItemByPath("context/tree/~", new ui.divider({}), 850, menus);
-            
+
             // Tab Context Menu
             mnuContext = new Menu({ id: "mnuContext" }, plugin).aml;
             menus.addItemByPath("context/tabs/", mnuContext, 0, plugin);
@@ -372,7 +385,19 @@ define(function(require, exports, module) {
             }
 
             mnuContext.on("prop.visible", removeContextInfo, false);
-    
+
+            menus.addItemByPath("Lock Tab", new ui.item({
+                command: "locktab"
+            }), 100, mnuContext, plugin);
+
+            menus.addItemByPath("Unlock Tab", new ui.item({
+                command: "unlocktab"
+            }), 100, mnuContext, plugin);
+
+            menus.addItemByPath("Rename Tab", new ui.item({
+                command: "renametab"
+            }), 100, mnuContext, plugin);
+
             menus.addItemByPath("Reveal in File Tree", new ui.item({
                 command: "revealtab"
             }), 100, mnuContext, plugin);
@@ -409,7 +434,7 @@ define(function(require, exports, module) {
             }), 1010, mnuContext, plugin);
 
             menus.addItemByPath("View/~", new ui.divider(), 800, plugin);
-            
+
             menus.addItemByPath("View/Layout/", null, 900, plugin);
 
             menus.addItemByPath("View/Layout/Single", new ui.item({
@@ -437,7 +462,7 @@ define(function(require, exports, module) {
             }), 500, mnuContext, plugin);
 
 
-            
+
             mnuEditors = tabs.getElement("mnuEditors");
             var div, label;
             div = menus.addItemToMenu(mnuEditors, new ui.divider(), 1000000, plugin);
@@ -456,7 +481,7 @@ define(function(require, exports, module) {
                     if (e.currentTarget) {
                         mnuContext.$tab = e.currentTarget.tagName == "page"
                             ? e.currentTarget.cloud9tab : null;
-                        mnuContext.$pane = (mnuContext.$tab || 0).pane 
+                        mnuContext.$pane = (mnuContext.$tab || 0).pane
                             || e.currentTarget.cloud9pane;
                     }
                     if (ui.isChildOf(pane.$buttons, e.htmlEvent.target, true)) {
@@ -464,19 +489,19 @@ define(function(require, exports, module) {
                         return false;
                     }
                 });
-                
+
                 var meta = e.pane.meta;
                 if (!meta.accessList)
                     meta.accessList = [];
                 if (!meta.accessList.toJson)
                     meta.accessList.toJson = accessListToJson;
             }, plugin);
-    
+
             //@todo store the stack for availability after reload
             tabs.on("tabBeforeClose", function(e) {
                 var tab = e.tab;
                 var event = e.htmlEvent || {};
-                
+
                 // Shift = close all
                 if (event.shiftKey) {
                     closealltabs();
@@ -488,14 +513,14 @@ define(function(require, exports, module) {
                     return false;
                 }
             }, plugin);
-            
+
             tabs.on("tabAfterClose", function(e) {
                 // Hack to force focus on the right pane
                 var accessList = e.tab.pane.meta.accessList;
                 if (tabs.focussedTab == e.tab && accessList[1])
                     e.tab.pane.aml.nextTabInLine = accessList[1].aml;
             }, plugin);
-            
+
             tabs.on("tabBeforeReparent", function(e) {
                 // Move to new access list
                 var lastList = e.lastPane.meta.accessList;
@@ -506,12 +531,12 @@ define(function(require, exports, module) {
                     accessList.unshift(e.tab);
                 else
                     accessList.push(e.tab);
-                
+
                 // Hack to force focus on the right pane
                 if (tabs.focussedTab == e.tab && lastList[0])
                     e.lastPane.aml.nextTabInLine = lastList[0].aml;
             }, plugin);
-            
+
             tabs.on("tabAfterClose", function(e) {
                 var tab = e.tab;
                 if (tab.document.meta.preview)
@@ -521,7 +546,7 @@ define(function(require, exports, module) {
                 tab.pane.meta.accessList.remove(tab);
                 paneList.remove(tab);
             }, plugin);
-            
+
             tabs.on("tabCreate", function(e) {
                 var tab = e.tab;
 
@@ -536,7 +561,7 @@ define(function(require, exports, module) {
                         }
                     }
                 }
-                
+
                 if (tab.document.meta.preview)
                     return;
 
@@ -564,7 +589,7 @@ define(function(require, exports, module) {
                         paneList[idx] = tab;
                 }
             }, plugin);
-    
+
             tabs.on("focusSync", function(e) {
                 var tab = e.tab;
                 if (!tab.loaded) return;
@@ -574,47 +599,47 @@ define(function(require, exports, module) {
                     accessList.remove(tab);
                     accessList.unshift(tab);
                     accessList.changed = true;
-                    
+
                     addToPaneList(tab, true);
                     paneList.changed = true;
-                    
+
                     settings.save();
                 }
-    
+
                 // @todo panel switch
-                if (tree.area && tree.area.activePanel == "tree" 
+                if (tree.area && tree.area.activePanel == "tree"
                   && settings.getBool('user/general/@revealfile')) {
                     revealtab(tab, true);
                 }
             }, plugin);
             tabs.on("tabAfterActivate", function(e) {
                 var tab = e.tab;
-                if (tab == tabs.focussedTab || !tab.loaded) 
+                if (tab == tabs.focussedTab || !tab.loaded)
                     return;
-            
+
                 if (!cycleKeyPressed) {
                     var accessList = tab.pane.meta.accessList;
                     accessList.remove(tab);
                     accessList.splice(1, 0, tab);
                     accessList.changed = true;
-                    
+
                     addToPaneList(tab, 2);
                     paneList.changed = true;
-                    
+
                     settings.save();
                 }
             }, plugin);
-    
+
             apf.addEventListener("keydown", function(eInfo) {
                 if (eInfo.keyCode == 17 || eInfo.keyCode == 18) {
                     cycleKeyPressed = true;
                 }
             });
-    
+
             apf.addEventListener("keyup", function(eInfo) {
                 if (eInfo.keyCode == 17 || eInfo.keyCode == 18) {
                     cycleKeyPressed = false;
-    
+
                     if (dirtyNextTab) {
                         var tab = tabs.focussedTab;
                         var accessList = tab.pane.meta.accessList;
@@ -624,42 +649,42 @@ define(function(require, exports, module) {
                             accessList.changed = true;
                             settings.save();
                         }
-    
+
                         dirtyNextTab = false;
                     }
                     if (dirtyNextPane) {
                         accessedPane = 0;
-    
+
                         var tab = tabs.focussedTab;
                         if (paneList[accessedPane] != tab && tab) {
                             paneList.remove(tab);
                             paneList.unshift(tab);
-    
+
                             paneList.changed = true;
                             settings.save();
                         }
-    
+
                         dirtyNextPane = false;
                     }
                 }
             });
-    
+
             // tabs.addEventListener("aftersavedialogcancel", function(e) {
             //     if (!changedTabs)
             //         return;
-    
+
             //     var i, l, tab;
             //     for (i = 0, l = changedTabs.length; i < l; i++) {
             //         tab = changedTabs[i];
             //         tab.removeEventListener("aftersavedialogclosed", arguments.callee);
             //     }
             // });
-            
+
             createLayoutMenus();
         }
-        
+
         /***** Methods *****/
-        
+
         function addToPaneList(tab, first) {
             var pane = tab.pane, found;
             paneList.every(function(tab) {
@@ -669,18 +694,18 @@ define(function(require, exports, module) {
                 }
                 return true;
             });
-            
-            if (found) 
+
+            if (found)
                 paneList.remove(found);
-            
+
             if (first == 2)
                 paneList.splice(1, 0, tab);
-            else if (first) 
+            else if (first)
                 paneList.unshift(tab);
-            else 
+            else
                 paneList.push(tab);
         }
-        
+
         function accessListToJson() {
             var list = [];
             this.forEach(function(tab, i) {
@@ -689,11 +714,11 @@ define(function(require, exports, module) {
             });
             return list;
         }
-        
+
         function clonetab(tab) {
             if (!tab)
                 tab = mnuContext.$tab || tabs.focussedTab;
-            
+
             var pane;
             tabs.getTabs().every(function(tab) {
                 if (tab.document.meta.cloned) {
@@ -702,50 +727,57 @@ define(function(require, exports, module) {
                 }
                 return true;
             });
-            
+
             if (!pane || pane == tab.pane)
                 pane = tab.pane.hsplit(true);
-            
+
             tabs.clone(tab, pane, function(err, tab) {
-                
+
             });
         }
-            
+
         function closetab(tab) {
-            if (!tab)
+
+            if (!tab) {
                 tab = mnuContext.$tab || tabs.focussedTab;
-                
+            }
+
+            if (tab && tab.document.meta.locked) {
+                return false;
+            }
+
             var pages = tabs.getTabs();
             var isLast = pages[pages.length - 1] == tab;
-    
+
             tab.close();
             tabs.resizePanes(isLast);
-    
+
             return false;
+
         }
-    
+
         function closealltabs(callback) {
             callback = typeof callback == "function" ? callback : null;
-    
+
             changedTabs = [];
             unchangedTabs = [];
-    
+
             var pages = tabs.getTabs();
             for (var i = 0, l = pages.length; i < l; i++) {
                 closepage(pages[i], callback);
             }
-    
+
             checkTabRender(callback);
         }
-    
+
         function closeallbutme(me, pages, callback) {
             if (!me) {
                 me = mnuContext.$tab || tabs.focussedTab;
             }
-    
+
             changedTabs = [];
             unchangedTabs = [];
-            
+
             if (!pages || !(pages instanceof Array)) {
                 var container = me && me.aml && me.aml.parentNode || tabs.container;
                 pages = tabs.getTabs(container);
@@ -756,11 +788,11 @@ define(function(require, exports, module) {
                 if (tab !== me)
                     closepage(tab, callback);
             }
-    
+
             tabs.resizePanes();
             checkTabRender(callback);
         }
-    
+
         function closepage(tab, callback) {
             var doc = tab.document;
             if (doc.changed && (!doc.meta.newfile || doc.value))
@@ -768,7 +800,24 @@ define(function(require, exports, module) {
             else
                 unchangedTabs.push(tab);
         }
-    
+
+        function lockTab(tab, tabs) {
+            tab.document.meta.locked = true;
+        }
+
+        function unlockTab(tab, tabs) {
+            tab.document.meta.locked = false;
+        }
+
+        function renameTab(tab, tabs) {
+            var name = prompt('Tab Name');
+            tab.document.meta.tabName = name;
+            tab.title = name;
+//             Object.defineProperties(tab, {
+//                 'value'
+//             });
+        }
+
         function checkTabRender(callback) {
             save.saveAllInteractive(changedTabs, function(result) {
                 if (result != save.CANCEL) {
@@ -777,7 +826,7 @@ define(function(require, exports, module) {
                     });
                     closeUnchangedTabs(done);
                 }
-                else 
+                else
                     done();
             });
             function done() {
@@ -789,53 +838,53 @@ define(function(require, exports, module) {
                 });
             }
         }
-    
+
         function closeUnchangedTabs(callback) {
             var tab;
             for (var i = 0, l = unchangedTabs.length; i < l; i++) {
                 tab = unchangedTabs[i];
                 tab.close(true);
             }
-    
+
             if (callback)
                 callback();
         }
-    
+
         function closealltotheright(tab) {
             if (!tab)
                 tab = mnuContext.$tab || tabs.focussedTab;
-                
+
             var pages = tab.pane.getTabs();
             var currIdx = pages.indexOf(tab);
-            
+
             closeallbutme(tab, pages.slice(currIdx));
         }
-    
+
         function closealltotheleft(tab) {
             if (!tab)
                 tab = mnuContext.$tab || tabs.focussedTab;
-                
+
             var pages = tab.pane.getTabs();
             var currIdx = pages.indexOf(tab);
-            
+
             closeallbutme(tab, pages.slice(0, currIdx));
         }
-    
+
         function nexttab(dir, keepOrder) {
             if (tabs.getTabs().length === 1)
                 return;
-            
+
             var tab = tabs.focussedTab;
             var accessList = tab.pane.meta.accessList;
-            
+
             var index = accessList.indexOf(tab);
             index += dir || 1;
-            
+
             if (index >= accessList.length)
                 index = 0;
             else if (index < 0)
                 index = accessList.length - 1;
-            
+
             var next = accessList[index];
             if (typeof next != "object" || !next.pane.visible)
                 return nexttab(dir, keepOrder);
@@ -848,23 +897,23 @@ define(function(require, exports, module) {
             }
             dirtyNextTab = !keepOrder;
         }
-    
+
         function previoustab(dir, keepOrder) {
             nexttab(dir || -1, keepOrder)
         }
-    
+
         function nextpane() {
             return $nextPane(1);
         }
-        
+
         function previouspane() {
             return $nextPane(-1);
         }
-        
+
         function $nextPane(dir) {
             if (tabs.getPanes().length === 1)
                 return;
-            
+
             var l = paneList.length;
             for (var i = 1; i <= l; i++) {
                 var index = (accessedPane + dir * i) % l;
@@ -875,38 +924,38 @@ define(function(require, exports, module) {
                     console.error("error in panelist");
                     continue;
                 }
-                
+
                 accessedPane = index;
                 tabs.focusTab(next.pane.activeTab, null, true);
                 dirtyNextPane = true;
                 return next.pane;
             }
         }
-        
+
         function gotopaneleft() {
             return $goToPane("left");
         }
-        
+
         function gotopaneright() {
             return $goToPane("right");
         }
-        
+
         function gotopanedown() {
             return $goToPane("down");
         }
-        
+
         function gotopaneup() {
             return $goToPane("up");
         }
-        
+
         function $goToPane(direction) {
             var newPane = findPaneToGoTo(direction);
             if (!newPane) return;
-            
+
             var activeTab = newPane.activeTab;
             tabs.focusTab(activeTab);
         }
-    
+
         function getPaneDimensions(pane) {
             var element = pane.container;
             var size = getElementSize(element);
@@ -917,9 +966,9 @@ define(function(require, exports, module) {
                 height: size.height
             };
             return dimensions;
-            
+
         }
-        
+
         function getElementOffset(element, type) {
             var offset = 0;
             do {
@@ -930,7 +979,7 @@ define(function(require, exports, module) {
             } while (element = element.offsetParent);
             return offset;
         }
-        
+
         function getElementSize(element) {
             var computedStyle = window.getComputedStyle(element);
             return {
@@ -938,106 +987,106 @@ define(function(require, exports, module) {
                 height: parseInt(computedStyle.height, 10),
             };
         }
-        
+
         /** For each direction
          * Exclude all panes not in the direction of this one
          * Exclude all panes that don't intersect on the other axis
          * Choose the closest pane
          * In case of tie choose the pane to the furthest left or top.
          **/
-            
+
         function findBoxToGoTo(boxes, currentBox, direction) {
             var possibleBoxes = [];
-            
+
             switch (direction) {
-                case "left": 
+                case "left":
                     possibleBoxes = boxes
                         .filter(function (box) { return box.x < currentBox.x; })
                         .filter(areBoxesInLineVertically.bind(null, currentBox));
-                        
+
                     if (!possibleBoxes.length) return null;
-                    
+
                     var chosenBox = possibleBoxes.reduce(function (prev, cur) {
                         if (!prev || cur.x > prev.x) return cur;
                         if (cur.x == prev.x && cur.y < prev.y) return cur;
                         return prev;
                     });
-                    
+
                     return chosenBox;
                 break;
-                case "right": 
+                case "right":
                     possibleBoxes = boxes
                         .filter(function (box) { return box.x > currentBox.x; })
                         .filter(areBoxesInLineVertically.bind(null, currentBox));
-                        
+
                     if (!possibleBoxes.length) return null;
-                    
+
                     var chosenBox = possibleBoxes.reduce(function (prev, cur) {
                         if (!prev || cur.x < prev.x) return cur;
                         if (cur.x == prev.x && cur.y < prev.y) return cur;
                         return prev;
                     });
-                    
+
                     return chosenBox;
                 break;
-                case "up": 
+                case "up":
                     possibleBoxes = boxes
                         .filter(function (box) { return box.y < currentBox.y; })
                         .filter(areBoxesInLineHorizontally.bind(null, currentBox));
-                        
+
                     if (!possibleBoxes.length) return null;
-                    
+
                     var chosenBox = possibleBoxes.reduce(function (prev, cur) {
                         if (!prev || cur.y > prev.y) return cur;
                         if (cur.y == prev.y && cur.x < prev.x) return cur;
                         return prev;
                     });
-                    
+
                     return chosenBox;
                 break;
-                case "down": 
+                case "down":
                     possibleBoxes = boxes
                         .filter(function (box) { return box.y > currentBox.y; })
                         .filter(areBoxesInLineHorizontally.bind(null, currentBox));
-                        
+
                     if (!possibleBoxes.length) return null;
-                    
+
                     var chosenBox = possibleBoxes.reduce(function (prev, cur) {
                         if (!prev || cur.y < prev.y) return cur;
                         if (cur.y == prev.y && cur.x < prev.x) return cur;
                         return prev;
                     });
-                    
+
                     return chosenBox;
                 break;
             }
         }
-        
+
         function areBoxesInLineVertically(box1, box2) {
             return !(box1.y + box1.height < box2.y || box2.y + box2.height < box1.y);
         }
-        
+
         function areBoxesInLineHorizontally(box1, box2) {
             return !(box1.x + box1.width < box2.x || box2.x + box2.width < box1.x);
         }
-        
-        
+
+
         function findPaneToGoTo(direction) {
             var panes = tabs.getPanes();
             if (!tabs.focussed || !tabs.focussedTab)
                 return;
-                
+
             var currentPane = tabs.focussedTab.pane;
             if (!currentPane) return;
-            
-            var boxes = panes.map(function (pane) { 
+
+            var boxes = panes.map(function (pane) {
                 return getPaneDimensions(pane);
             });
             var currentBox = getPaneDimensions(currentPane);
-            
+
             var newBox = findBoxToGoTo(boxes, currentBox, direction);
             if (!newBox) return;
-            
+
             var newPane = null;
             panes.forEach(function (pane) {
                 var paneDimensions = getPaneDimensions(pane);
@@ -1045,34 +1094,34 @@ define(function(require, exports, module) {
                     newPane = pane;
                 }
             });
-            
+
             return newPane;
         }
-        
+
         function gototabright(opts) {
             return cycleTab("right", opts);
         }
-    
+
         function gototableft(opts) {
             return cycleTab("left", opts);
         }
-    
+
         function cycleTab(dir, opts) {
             var curr = tabs.focussedTab;
             var pages = curr && curr.pane.getTabs();
             if (!pages || pages.length == 1)
                 return;
-            
+
             if (opts && opts.editorType) {
                 pages = pages.filter(function(p) {
                     return p.editorType == opts.editorType;
                 });
             }
-            
+
             var currIdx = pages.indexOf(curr);
             var start = currIdx;
             var tab;
-            
+
             do {
                 var idx = currIdx;
                 switch (dir) {
@@ -1082,43 +1131,43 @@ define(function(require, exports, module) {
                     case "last": idx = pages.length - 1; break;
                     default: idx--;
                 }
-        
+
                 if (idx < 0)
                     idx = pages.length - 1;
                 if (idx > pages.length - 1)
                     idx = 0;
-                
+
                 // No pages found that can be focussed
                 if (start == idx)
                     return;
-                
+
                 tab = pages[idx];
-            } 
+            }
             while (!tab.pane.visible);
-    
+
             if (tab.pane.visible)
                 tabs.focusTab(tab, null, true);
-            
+
             return false;
         }
-    
+
         function movetabright() { hmoveTab("right"); }
         function movetableft() { hmoveTab("left"); }
         function movetabup() { vmoveTab("up"); }
         function movetabdown() { vmoveTab("down"); }
-    
+
         function hmoveTab(dir) {
             var bRight = dir == "right";
             var tab = tabs.focussedTab;
             if (!tab)
                 return;
-            
+
             // Tabs within the current pane
             var pages = tab.pane.getTabs();
-            
+
             // Get new index
             var idx = pages.indexOf(tab) + (bRight ? 2 : -1);
-            
+
             // Before current pane
             if (idx < 0 || idx > pages.length) {
                 tab.pane.moveTabToSplit(tab, dir);
@@ -1131,17 +1180,17 @@ define(function(require, exports, module) {
             tabs.focusTab(tab);
             return false;
         }
-        
+
         function vmoveTab(dir) {
             var tab = tabs.focussedTab;
             if (!tab)
                 return;
-            
+
             tab.pane.moveTabToSplit(tab, dir);
             tabs.focusTab(tab);
             return false;
         }
-    
+
         function tab1() { return showTab(1); }
         function tab2() { return showTab(2); }
         function tab3() { return showTab(3); }
@@ -1152,7 +1201,7 @@ define(function(require, exports, module) {
         function tab8() { return showTab(8); }
         function tab9() { return showTab(9); }
         function tab0() { return showTab(10); }
-    
+
         function showTab(idx) {
             // our indexes are 0 based an the number coming in is 1 based
             var pages = [];
@@ -1165,11 +1214,11 @@ define(function(require, exports, module) {
             var tab = pages[idx - 1];
             if (!tab)
                 return false;
-            
+
             tabs.focusTab(tab, null, true);
             return false;
         }
-    
+
         /**
          * Scrolls to the selected pane's file path in the "Project Files" tree
          *
@@ -1182,26 +1231,26 @@ define(function(require, exports, module) {
                 tab = tabs.focussedTab;
             if (!tab)
                 return false;
-    
+
             // Tell other extensions to exit their fullscreen mode (for ex. Zen)
             // so this operation is visible
             // ide.dispatchEvent("exitfullscreen");
-    
+
             revealInTree(tab, noFocus);
         }
-    
+
         function revealInTree(tab, noFocus) {
             panels.activate("tree");
             var path = tab.path || tab.relatedPath;
-            
+
             if (path)
                 done(null, path);
             else if (tab.editor.getPathAsync)
                 tab.editor.getPathAsync(done);
-            
+
             if (!noFocus)
                 tree.focus();
-            
+
             function done(err, path) {
                 if (err || !path)
                     return console.error(err);
@@ -1212,11 +1261,11 @@ define(function(require, exports, module) {
                 });
             }
         }
-        
+
         function canTabBeRemoved(pane, min) {
-            if (!pane || pane.getTabs().length > (min || 0)) 
+            if (!pane || pane.getTabs().length > (min || 0))
                 return false;
-            
+
             var containers = tabs.containers;
             for (var i = 0; i < containers.length; i++) {
                 if (ui.isChildOf(containers[i], pane.aml)) {
@@ -1226,34 +1275,34 @@ define(function(require, exports, module) {
             }
             return false;
         }
-        
+
         function closepane(tab, pane) {
             if (!tab)
                 tab = tabs.focussedTab;
             if (!pane)
                 pane = tab.pane;
             if (!pane) return;
-            
+
             var pages = pane.getTabs();
             if (!pages.length) {
                 if (canTabBeRemoved(pane))
                     pane.unload();
                 return;
             }
-            
+
             changedTabs = [];
             unchangedTabs = [];
-            
+
             // Ignore closing tabs
             menuClosedItems.ignore = true;
-    
+
             // Keep information to restore pane set
             var state = [];
             var type = pane.aml.parentNode.localName;
-            var nodes = pane.aml.parentNode.childNodes.filter(function(p) { 
+            var nodes = pane.aml.parentNode.childNodes.filter(function(p) {
                 return p.localName != "splitter";
             });
-            
+
             state.title = pages.length + " Tabs";
             state.type = type == "vsplitbox" ? "vsplit" : "hsplit";
             state.far = nodes.indexOf(pane.aml) == 1;
@@ -1262,67 +1311,67 @@ define(function(require, exports, module) {
             state.restore = $restoreTabGroup;
             state.paneName = pane.name;
             state.document = { meta: {}};
-            
+
             // Close pages
-            pages.forEach(function(tab) { 
+            pages.forEach(function(tab) {
                 state.push(tab.getState());
-                closepage(tab); 
+                closepage(tab);
             });
-            
+
             tabs.resizePanes();
             checkTabRender(function() {
                 if (canTabBeRemoved(pane))
                     pane.unload();
-                    
+
                 // Stop ignoring closing tabs
                 menuClosedItems.ignore = false;
-                
+
                 // @todo there should probably be some check here
                 addTabToClosedMenu(state);
             });
         }
-        
-        function $restoreTabGroup(state) { 
+
+        function $restoreTabGroup(state) {
             // pane was not being used. Why?
             // var pane = state.sibling;
-            // if (pane && pane.cloud9pane) 
+            // if (pane && pane.cloud9pane)
             //     pane = pane.cloud9pane.aml;
             var pane = tabs.findPane(state.paneName) || {};
             var oldpane = state.pane;
             var newpane = oldpane.getTabs().length === 0
                 ? oldpane
                 : oldpane[state.type](state.far, null, pane.aml);
-            
+
             state.forEach(function(s) {
                 s.pane = newpane;
                 tabs.open(s, function() {});
             });
         }
-        
+
         function hsplit(tab, pane) {
             if (!tab)
                 tab = tabs.focussedTab;
-            
+
             if (tab)
                 pane = tab.pane;
-            
+
             var newpane = pane.hsplit(true);
             if (pane.getTabs().length > 1)
                 tab.attachTo(newpane);
         }
-        
+
         function vsplit(tab, pane) {
             if (!tab)
                 tab = tabs.focussedTab;
-            
+
             if (tab)
                 pane = tab.pane;
-            
+
             var newpane = pane.vsplit(true);
             if (pane.getTabs().length > 1)
                 tab.attachTo(newpane);
         }
-        
+
         function nosplit() {
             var panes = tabs.getPanes(tabs.container);
             var first = panes[0];
@@ -1334,102 +1383,102 @@ define(function(require, exports, module) {
                 pane.unload();
             }
         }
-        
+
         function twovsplit(hsplit) {
             var panes = tabs.getPanes(tabs.container);
-            
+
             // We're already in a two vsplit
-            if (panes.length == 2 && panes[0].aml.parentNode.localName 
+            if (panes.length == 2 && panes[0].aml.parentNode.localName
               == (hsplit ? "hsplitbox" : "vsplitbox"))
                 return panes;
-            
+
             // Split the only pane there is
             if (panes.length == 1) {
                 var newtab = panes[0][hsplit ? "hsplit" : "vsplit"](true);
                 return [panes[0], newtab];
             }
-            
+
             var c = tabs.containers[0].firstChild.childNodes.filter(function(f) {
                 return f.localName != "splitter";
             });
             // var left = c[0].getElementsByTagNameNS(apf.ns.aml, "tab");
             var right = c[1].getElementsByTagNameNS(apf.ns.aml, "tab");
-            
+
             for (var i = 1, l = panes.length; i < l; i++) {
                 panes[i].unload();
             }
-            
+
             var newtab = panes[0][hsplit ? "hsplit" : "vsplit"](true);
             right.forEach(function(tab) {
                 if (tab.cloud9tab)
                     tab.cloud9tab.attachTo(newtab, null, true);
             });
-            
+
             return [panes[0], newtab];
         }
-        
+
         function twohsplit() {
             return twovsplit(true);
         }
-        
+
         function foursplit() {
             var panes = twohsplit();
             panes[0].vsplit(true);
             panes[1].vsplit(true);
         }
-        
+
         function threeleft() {
             var panes = twohsplit();
             panes[0].vsplit(true);
         }
-        
+
         function threeright() {
             var panes = twohsplit();
             panes[1].vsplit(true);
         }
-        
+
         function checkReopenedTab(e) {
             var tab = e.tab;
             if (!tab.path)
                 return;
-            
+
             fs.stat(tab.path, function(err, stat) {
                 if (err) return;
-                
+
                 // @todo this won't work well on windows, because
                 // there is a 20s period in which the mtime is
-                // the same. The solution would be to have a 
-                // way to compare the saved document to the 
+                // the same. The solution would be to have a
+                // way to compare the saved document to the
                 // loaded document that created the state
                 if (tab.document.meta.timestamp < stat.mtime) {
                     var doc = tab.document;
-                    
+
                     question("File Changed",
                       tab.path + " has been changed on disk.",
                       "Would you like to reload this file?",
                       function() {
                           tabs.reload(tab, function() {});
-                      }, 
+                      },
                       function() {
                           // Set to changed
                           doc.undoManager.bookmark(-2);
-                      }, 
+                      },
                       { merge: false, all: false }
                     );
                 }
             });
         }
-        
+
         // Record the last 10 closed tabs or pane sets
         function addTabToClosedMenu(tab) {
             if (menuClosedItems.ignore) return;
             if (tab.document.meta.preview || tab.document.meta.cloned)
                 return;
-            
+
             // Record state
             var state = tab.getState();
             var restore = tab.restore;
-            
+
             var path = tab.path || tab.editorType;
             if (!restore) {
                 for (var i = menuClosedItems.length - 1; i >= 0; i--) {
@@ -1438,7 +1487,7 @@ define(function(require, exports, module) {
                     }
                 }
             }
-            
+
             // Create menu item
             var item = new ui.item({
                 caption: tab.title,
@@ -1448,43 +1497,43 @@ define(function(require, exports, module) {
                     // Update State
                     state.active = true;
                     state.pane = this.parentNode.pane;
-                    
+
                     tabs.on("open", checkReopenedTab);
-                    
+
                     // Open pane
                     restore
                         ? restore(state)
                         : tabs.open(state, function() {});
-                        
+
                     tabs.off("open", checkReopenedTab);
-                    
+
                     // Remove pane from menu
                     menuClosedItems.remove(item);
                     item.destroy(true, true);
-                    
+
                     // Clear label and divider if there are no items
                     if (menuClosedItems.length === 0)
                         menuClosedItems.hide();
                 }
             });
-            
+
             // TODO: passing path to item doesn't work since apf adds it only when menu is shown
             item.path = path;
-            
+
             // Add item to menu
             menuClosedItems.push(item);
             var index = menuClosedItems.index = (menuClosedItems.index || 0) + 1;
             menus.addItemToMenu(mnuEditors, item, 2000000 - index, false);
-            
+
             // Show label and divider
             menuClosedItems.show();
-            
+
             // Remove excess menu item
             if (menuClosedItems.length > 10)
                 menuClosedItems.shift().destroy(true, true);
             tab = null;
         }
-    
+
         function updateTabMenu(force) {
             // Approximating order
             var pages = [];
@@ -1493,22 +1542,22 @@ define(function(require, exports, module) {
             });
             var length = Math.min(10, pages.length);
             var start = 1000;
-            
+
             // Destroy all items
             menuItems.forEach(function(item) {
                 item.destroy(true, true);
             });
             menuItems = [];
-            
+
             if (!pages.length)
                 return;
-            
+
             var mnu, tab;
-            
+
             // Create new divider
             menus.addItemToMenu(mnuTabs, mnu = new ui.divider(), start, false);
             menuItems.push(mnu);
-            
+
             // Create new items
             for (var i = 0; i < length; i++) {
                 tab = pages[i];
@@ -1520,7 +1569,7 @@ define(function(require, exports, module) {
                 }), start + i + 1, false);
                 menuItems.push(mnu);
             }
-            
+
             if (pages.length > length) {
                 menus.addItemToMenu(mnuTabs, mnu = new ui.item({
                     caption: "More...",
@@ -1532,17 +1581,17 @@ define(function(require, exports, module) {
             }
             tab = pages = null;
         }
-        
+
         function reopenLastTab() {
             var item = menuClosedItems[menuClosedItems.length - 1];
             if (item)
                 item.getAttribute("onclick").call(item);
         }
-        
+
         function createLayoutMenus() {
             var LAYOUT_MENU_PATH = "Window/Saved Layouts/";
             var SAVED_LAYOUTS_PATH = "/.c9/saved-layouts/";
-            
+
             commands.addCommand({
                 name: "savePaneLayout",
                 group: "Window",
@@ -1553,7 +1602,7 @@ define(function(require, exports, module) {
                     if (!stateName)
                         return;
                     var sanitizedStateName = stateName.trim().replace(/[\\\/:\r\n~]|\.\./g, "-") + ".tabstate";
-                    
+
                     fs.writeFile(SAVED_LAYOUTS_PATH + sanitizedStateName, JSON.stringify(state, null, "\t"), function(err) {
                         if (err) {
                             return alert(err);
@@ -1561,7 +1610,7 @@ define(function(require, exports, module) {
                     });
                 }
             }, plugin);
-            
+
             commands.addCommand({
                 name: "savePaneLayoutAndCloseTabs",
                 group: "Window",
@@ -1571,7 +1620,7 @@ define(function(require, exports, module) {
                     tabs.setState(null, function() {});
                 }
             }, plugin);
-            
+
             // menus.insert
             menus.addItemByPath(LAYOUT_MENU_PATH, new ui.menu({
                 "onprop.visible": function(e) {
@@ -1602,35 +1651,35 @@ define(function(require, exports, module) {
                     }
                 }
             }), 10050, plugin);
-            
+
             function getAutoSaveName() {
                 return (new Date()).toLocaleString() + " [" + tabs.getTabs().length + " tabs]";
             }
-            
+
             function rebuildLayoutMenu(err, stats) {
                 menus.remove(LAYOUT_MENU_PATH);
                 var c = 0;
-                
+
                 menus.addItemByPath(LAYOUT_MENU_PATH + "Save...", new ui.item({
                     command: "savePaneLayout"
                 }), c += 100, plugin);
-                
+
                 menus.addItemByPath(LAYOUT_MENU_PATH + "Save And Close All...", new ui.item({
                     command: "savePaneLayoutAndCloseTabs"
                 }), c += 100, plugin);
-                
+
                 menus.addItemByPath(LAYOUT_MENU_PATH + "~", new ui.divider({
                 }), c += 100, plugin);
-                
+
                 menus.addItemByPath(LAYOUT_MENU_PATH + "Show Saved Layouts in File Tree", new ui.item({
                     onclick: function() {
                         revealInTree({ path: SAVED_LAYOUTS_PATH });
                     }
                 }), c += 100, plugin);
-                
+
                 menus.addItemByPath(LAYOUT_MENU_PATH + "~", new ui.divider({
                 }), c += 100, plugin);
-                
+
                 if (err) {
                     if (err.code == "ENOENT")
                         return;
@@ -1643,7 +1692,7 @@ define(function(require, exports, module) {
                         disabled: true,
                     }), c += 100, plugin);
                 }
-                
+
                 for (var i = 0; i < stats.length; i++) {
                     var stat = stats[i];
                     var caption = stat.name.replace(/.tabstate$/, "");
@@ -1653,17 +1702,17 @@ define(function(require, exports, module) {
                 }
             }
         }
-        
+
         /***** Lifecycle *****/
-        
+
         plugin.on("load", function() {
             load();
         });
         plugin.on("enable", function() {
-            
+
         });
         plugin.on("disable", function() {
-            
+
         });
         plugin.on("unload", function() {
             menuItems.forEach(function(item) {
@@ -1674,7 +1723,7 @@ define(function(require, exports, module) {
                 item.destroy(true, true);
             });
             menuClosedItems.length = 0; // = [];
-            
+
             mnuContext = null;
             mnuEditors = null;
             mnuTabs = null;
@@ -1686,12 +1735,12 @@ define(function(require, exports, module) {
             unchangedTabs = null;
             dirtyNextTab = null;
             dirtyNextPane = null;
-            
+
             loaded = false;
         });
-        
+
         /***** Register and define API *****/
-        
+
         /**
          * Draws the file tree
          * @event afterfilesave Fires after a file is saved
@@ -1701,231 +1750,246 @@ define(function(require, exports, module) {
          **/
         plugin.freezePublicAPI({
             /**
-             * 
+             *
              */
             get contextMenu() { return mnuContext; },
-            
+
             /**
-             * 
+             *
              */
             clonetab: clonetab,
-            
+
             /**
-             * 
+             *
              */
             closetab: closetab,
-            
+
             /**
-             * 
+             *
              */
             closealltabs: closealltabs,
-            
+
             /**
-             * 
+             *
              */
             closeallbutme: closeallbutme,
-            
+
             /**
-             * 
+             *
+             */
+             locktab: lockTab,
+
+            /**
+             *
+             */
+             unlocktab: unlockTab,
+
+            /**
+             *
+             */
+             renametab: renameTab,
+
+            /**
+             *
              */
             gototabright: gototabright,
-            
+
             /**
-             * 
+             *
              */
             gototableft: gototableft,
-            
+
             /**
-             * 
+             *
              */
             movetabright: movetabright,
-            
+
             /**
-             * 
+             *
              */
             movetableft: movetableft,
-            
+
             /**
-             * 
+             *
              */
             movetabup: movetabup,
-            
+
             /**
-             * 
+             *
              */
             movetabdown: movetabdown,
-            
+
             /**
-             * 
+             *
              */
             tab1: tab1,
-            
+
             /**
-             * 
+             *
              */
             tab2: tab2,
-            
+
             /**
-             * 
+             *
              */
             tab3: tab3,
-            
+
             /**
-             * 
+             *
              */
             tab4: tab4,
-            
+
             /**
-             * 
+             *
              */
             tab5: tab5,
-            
+
             /**
-             * 
+             *
              */
             tab6: tab6,
-            
+
             /**
-             * 
+             *
              */
             tab7: tab7,
-            
+
             /**
-             * 
+             *
              */
             tab8: tab8,
-            
+
             /**
-             * 
+             *
              */
             tab9: tab9,
-            
+
             /**
-             * 
+             *
              */
             tab0: tab0,
-            
+
             /**
-             * 
+             *
              */
             revealtab: revealtab,
-            
+
             /**
-             * 
+             *
              */
             reopenLastTab: reopenLastTab,
-            
+
             /**
-             * 
+             *
              */
             nexttab: nexttab,
-            
+
             /**
-             * 
+             *
              */
             previoustab: previoustab,
-            
+
             /**
-             * 
+             *
              */
             closealltotheright: closealltotheright,
-            
+
             /**
-             * 
+             *
              */
             closealltotheleft: closealltotheleft,
-            
+
             /**
-             * 
+             *
              */
             closepane: closepane,
-            
+
             /**
-             * 
+             *
              */
             hsplit: hsplit,
-            
+
             /**
-             * 
+             *
              */
             vsplit: vsplit,
-            
+
             /**
-             * 
+             *
              */
             nosplit: nosplit,
-            
+
             /**
-             * 
+             *
              */
             twovsplit: twovsplit,
-            
+
             /**
-             * 
+             *
              */
             twohsplit: twohsplit,
-            
+
             /**
-             * 
+             *
              */
             foursplit: foursplit,
-            
+
             /**
-             * 
+             *
              */
             threeleft: threeleft,
-            
+
             /**
-             * 
+             *
              */
             threeright: threeright,
-            
+
             /**
-             * 
+             *
              */
             nextpane: nextpane,
-            
+
             /**
-             * 
+             *
              */
             previouspane: previouspane,
-            
+
             /**
-             * 
+             *
              */
             gotopaneleft: gotopaneleft,
-            
+
             /**
-             * 
+             *
              */
             gotopaneright: gotopaneright,
-            
+
             /**
-             * 
+             *
              */
             gotopanedown: gotopanedown,
-            
+
             /**
-             * 
+             *
              */
             gotopaneup: gotopaneup,
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
-            
+
+
+
+
+
+
+
+
+
+
+
             /**
              * @ignore
              */
             cycleTab: cycleTab
         });
-        
+
         register(null, {
             tabbehavior: plugin
         });
